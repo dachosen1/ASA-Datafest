@@ -1,7 +1,4 @@
 ---
-title: "Data Fest"
-author: "Anderson Nelson"
-date: "March 29, 2019"
 output: rmarkdown::github_document
 ---
 
