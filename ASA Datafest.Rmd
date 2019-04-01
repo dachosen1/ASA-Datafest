@@ -1,0 +1,310 @@
+---
+title: "Data Fest"
+author: "Anderson Nelson"
+date: "March 29, 2019"
+output: pdf_document
+---
+
+```{r Libraries, message=FALSE, include=FALSE}
+
+library(knitr); library(data.table); library(tidyverse); library(lubridate); library(purrr); library(corrplot)
+```
+
+
+
+```{r setup, include=FALSE}
+opts_chunk$set(echo = TRUE, eval = TRUE, comment="", warning = FALSE, message = FALSE, tidy.opts=list(width.cutoff=55), tidy = TRUE)
+```
+
+```{r functions}
+# useful functions 
+mean.missing <- function(x) {
+ return(mean(is.na(x)))
+}
+
+# round to 2 
+round.numerics <- function(x, digits) {
+ if (is.numeric(x)) {
+  x <- round(x = x, digits = digits)
+  }
+ return(x)
+}
+
+# Average values remove NA 
+avgcol <- function (x) {
+ value = mean(x, na.rm = TRUE)
+ return(value)
+}
+
+# count na 
+countna <- function (x){
+ value = length(is.na(x))
+ return (value)
+}
+
+# replace missing with a stratisfied randomd sample 
+replace.missing <- function(x){
+    nn <- sum(is.na(x))
+  if(nn>0){
+     tab <- table(x)
+     p <- tab / sum(tab)
+     x[which(is.na(x))] = sample(names(tab), replace=T, size = nn, prob = p)
+  }
+    else{ x = x }
+  return(x)
+}
+
+sampled.imputation <- function(x){ 
+ w <- which(is.na(x)) 
+ if(length(w) > 0){
+  x[w] <- sample(x = x[!is.na(x)], size = length(w), replace = TRUE)}
+ return(x) 
+}
+
+
+```
+
+
+```{r import documetns}
+# file names 
+games.file <- 'games.csv'
+gps.file <- 'gps.csv'
+rps.file <- 'rpe.csv'
+wellness.file <- 'wellness.csv'
+
+# import file 
+games.data <- fread(games.file)
+gps.data <- fread(gps.file)
+rps.data <- fread(rps.file)
+wellness.data <- fread(wellness.file)
+```
+
+```{r values }
+# filter for the minumum game 
+games.number <- 6
+games.6.date <- games.data[GameID == 6]$Date
+```
+
+```{r pressure, echo=FALSE}
+# Head of data 
+head(games.data)
+head(gps.data)
+head(rps.data)
+head(wellness.data)
+
+# dim of data 
+dim(games.data)
+dim(gps.data)
+dim(rps.data)
+dim(wellness.data)
+```
+
+# Exploring Missing Values 
+```{r Exploring Missing Values wellness data}
+# Percentage of wellness missing 
+wellness.na <- wellness.data[, lapply(X = .SD, FUN = 'mean.missing'), by = PlayerID]
+wellness.na[ ,lapply(X = .SD, FUN = "round.numerics", digits = 2)]
+
+# Count of Nutrition per player 
+Nutrition.perplayer <- wellness.data[, .N, by = .(Nutrition, PlayerID)]
+dcast(data = Nutrition.perplayer, PlayerID ~ Nutrition)
+
+# Count of Nutrition adjustment per player 
+Nutrition.adj.perplayer <- wellness.data[, .N, by = .(NutritionAdjustment, PlayerID)]
+Nutrition.adj.perplayer <- dcast(data = Nutrition.adj.perplayer, PlayerID ~ NutritionAdjustment)
+Nutrition.adj.perplayer
+
+# impute missing values in Nutrition, Nutrition USG adjustment 
+wellness.data[, Nutrition.imputed := sampled.imputation(x = get("Nutrition"))]
+wellness.data[, NutritionAdjustment.imputed := sampled.imputation(x = get("NutritionAdjustment"))]
+wellness.data[, usg.imputed := sampled.imputation(x = get("USG"))]
+
+# conver to numeric 
+wellness.data$usg.imputed <- as.numeric(wellness.data$usg.imputed)
+
+# Percentage of wellness missing 
+wellness.na <- wellness.data[, lapply(X = .SD, FUN = 'mean.missing'), by = PlayerID]
+wellness.na[ ,lapply(X = .SD, FUN = "round.numerics", digits = 2)]
+```
+
+```{r Exploring Missing Values rps data}
+# session type per employee 
+rps.data.condition <- rps.data[Date == games.6.date,.N, by = .(SessionType, PlayerID)]
+rps.data.condition <- dcast(data = rps.data.condition, SessionType ~ PlayerID)
+rps.data.condition
+
+# Value per employees and session 
+rps.data.replace <- rps.data[, lapply(.SD, avgcol), by = .(Date, PlayerID), .SDcols = 7:10]
+rps.data.replace
+
+# extract the complete cases 
+row.dt.replace <- nrow(rps.data.replace)
+rps.data.replace <- rps.data.replace[complete.cases(rps.data.replace)]
+
+
+paste0('Removed ', row.dt.replace - nrow(rps.data.replace), ' values from the dataset or ', 
+       round(((row.dt.replace - nrow(rps.data.replace)) / row.dt.replace) * 100,2),  
+       '%', 
+       'total remaining is ', nrow(rps.data.replace))
+
+```
+
+# Data Exploration 
+```{r Data exploration gps data}
+# Game count 
+game.count <- gps.data[,.(count = .N), by = GameID]
+
+ggplot(data = game.count, aes(x = GameID, y = count)) + 
+ geom_bar(stat = 'identity', fill = 'forestgreen') + 
+ ggtitle('Number of Data points per game') + ylab('Count of games') + xlab('Game number') + 
+ theme_classic() 
+
+```
+
+```{r Data Exploration gps}
+# percentage of missing data 
+gps.data[, lapply(.SD, mean.missing)]
+
+# cols to evalue
+colnumer <- c(7:12)
+
+# gps data summary 
+gps.data.summary <- gps.data[, lapply(.SD, avgcol), by = .(GameID,PlayerID), .SDcols = colnumer]
+gps.data.summary <- gps.data.summary[, lapply(.SD, round.numerics, digits = 2)]
+
+```
+
+```{r Data exploration wellness data}
+
+# Health exploration  
+wellness.data.health <- wellness.data[,c(map(.SD, mean)), by = .(Date,Nutrition.imputed,Pain), .SDcols = c(3:6,9:11,22)]
+wellness.data.health$Date <- lubridate::as_date(wellness.data.health$Date)
+
+# Fatigue Trends 
+ggplot(data = wellness.data.health, aes(x = Date, y = Fatigue)) + geom_point(col = 'forestgreen') + 
+ geom_smooth( fill = 'violetred4') + ggtitle('Fatigue Trends Over Time For Nutirion with Pain') + 
+ theme_classic(base_family = 'trebuchet', base_size = 18) + facet_grid(Nutrition.imputed ~Pain) +
+ theme(axis.text=element_text(size=12),axis.title=element_text(size=16,face="bold"))
+
+# soreness trends 
+ggplot(data = wellness.data.health, aes(x = Date, y = Soreness)) + 
+ geom_point(col = 'forestgreen') + geom_smooth( fill = 'violetred4') + 
+ ggtitle('soreness Trends Over Time Nutirion with Pain') + 
+ theme_classic() + facet_grid(Pain ~ Nutrition.imputed)
+ 
+# Desire Trend 
+ggplot(data = wellness.data.health, aes(x = Date, y = Desire)) + 
+ geom_point(col = 'forestgreen') + geom_smooth( fill = 'violetred4') + 
+ ggtitle('Desire Trends Over Time: Nutirion with Pain') + 
+ theme_classic() + facet_grid(Pain ~ Nutrition.imputed)
+ 
+# Irratability trend 
+ggplot(data = wellness.data.health, aes(x = Date, y = Irritability)) + 
+ geom_point(col = 'forestgreen') + geom_smooth( fill = 'violetred4') + 
+ ggtitle('Irratability Trends Over Time Nutirion with Pain') + 
+ theme_classic() + facet_grid(Pain ~ Nutrition.imputed)
+
+# sleep quality trend 
+ggplot(data = wellness.data.health, aes(x = Date, y = SleepHours)) + 
+ geom_point(col = 'forestgreen') + geom_smooth( fill = 'violetred4') + 
+ ggtitle('Sleep Quality Trends Over Time Nutirion with Pain') + 
+ theme_classic() + facet_grid(Pain ~ Nutrition.imputed)
+ 
+# Montitoring trend 
+ggplot(data = wellness.data.health, aes(x = Date, y = MonitoringScore)) + 
+ geom_point(col = 'forestgreen') + geom_smooth( fill = 'violetred4') + 
+ ggtitle('Montitoring Trends Over Time Nutirion with Pain') + 
+ theme_classic() + facet_grid(Pain ~ Nutrition.imputed)
+
+
+```
+```{r}
+# data transformation 
+wellness.data.health$duration <- wellness.data.health$Date - min(wellness.data.health$Date)  
+wellness.data.health$duration <- as.numeric(wellness.data.health$duration)
+wellness.data.health$NutritionAdjustment.imputed <- as.numeric(unlist(as.data.frame(wellness.data.health$NutritionAdjustment.imputed)))
+wellness.data.health$Pain <- as.numeric(unlist(as.data.frame(wellness.data.health$Pain)))
+wellness.data.health$Nutrition.imputed <- as.numeric(wellness.data.health$Nutrition.imputed)
+
+map_chr(wellness.data, class)
+#replace NA with 3 
+#wellness.data.health$Nutrition <- replace_na(data = wellness.data.health$Nutrition, replace = 3)
+
+# correlation 
+well.corr <- cor(wellness.data.health[,c(3:12)])
+
+map_chr(wellness.data, class)
+colnames(wellness.data)
+corrplot(corr = well.corr, method = 'square', type = 'lower', diag = FALSE, is.corr = TRUE)
+
+# fatigue 
+ggplot(data = wellness.data, aes( x = Fatigue)) + geom_bar( fill = 'forestgreen') + 
+ ggtitle('Fatigue Distribution') + xlab('Player Fatigue Score')  + ylab('Count of Player Fatigue Score') + 
+ xlim(1,7) + 
+ theme_classic()
+
+map_chr(wellness.data.health, class)
+dim(wellness.data.health)
+
+
+names(wellness.data.health)
+
+head(wellness.data.health)
+```
+
+```{r}
+fatigue.daily.average <- wellness.data[ PlayerID %in% c(1:7), .(`Fatigue Daily Average`  = mean(Fatigue), `Mean Monitoring Score` = mean(MonitoringScore)), by = .(Date, PlayerID)]
+fatigue.daily.average$Date <- as.Date(fatigue.daily.average$Date)
+
+
+ggplot(fatigue.daily.average) + geom_line(aes(x = Date , y = `Fatigue Daily Average`)) +
+ facet_grid(PlayerID ~ . )
+
+```
+
+```{r evaluate outliers}
+wellness.data[Fatigue == 7]
+```
+
+```{r}
+# count of number of records per day in the wellness data 
+Wellness.data.count <- wellness.data %>%
+ group_by(Date) %>%
+ summarise(count = n())
+
+# games and date 
+gamesdate<- games.data[,1:2]
+
+# games data 
+gps.data.summary <- merge(x = gps.data.summary, y = gamesdate, by = 'GameID')
+
+# Generate unique ID 
+wellness.data$uniqueid <- paste0(wellness.data$Date, wellness.data$PlayerID)
+gps.data.summary$uniqueid <- paste0(gps.data.summary$Date, gps.data.summary$PlayerID)
+```
+
+
+
+
+```{r}
+merged.data <- right_join(x = gps.data.summary, y = wellness.data,by = 'uniqueid')
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
