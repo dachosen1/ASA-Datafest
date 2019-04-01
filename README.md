@@ -1,6 +1,6 @@
 # ASA-Datafest
 
-I had the opportunity to Participate in Columbia Universities ASA Data, and our team came in 2nd place. I created this repository to share our approach. 
+I had the opportunity to participate in Columbia Universities ASA Data, and our team came in 2nd place. I created this repository to share our approach. 
 
 
 ### The Challenge
